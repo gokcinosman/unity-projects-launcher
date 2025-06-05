@@ -1,0 +1,16 @@
+{
+  "required_api_version": "2",
+  "name": "Unity Project Launcher",
+  "description": "Quickly find and launch your Unity projects.",
+  "developer_name": "Gokcin",
+  "icon": "images/unity.png",
+  "preferences": [
+    {
+      "id": "kw_upro",
+      "type": "keyword",
+      "name": "Unity Projects (upro)",
+      "description": "Use upro to list and launch Unity projects",
+      "default_value": "upro"
+    }
+  ]
+}
