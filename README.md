@@ -12,7 +12,7 @@ This Ulauncher extension allows you to launch your Unity projects directly witho
 
 The extension lists your projects in Ulauncher search results as follows:
 
-![Extension Usage Example](https://raw.githubusercontent.com/gokcinosman/unity-projects-launcher/images/readme.png)
+![Extension Usage Example](https://github.com/gokcinosman/unity-projects-launcher/blob/main/images/readme.png)
 
 In the image:
 *   **botanik (2022.3.59f1):** The associated Unity Editor version for this project is installed on your system, and the project is ready to be opened.
