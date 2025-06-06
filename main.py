@@ -8,13 +8,19 @@ from ulauncher.api.shared.event import KeywordQueryEvent
 from ulauncher.api.shared.item.ExtensionResultItem import ExtensionResultItem
 from ulauncher.api.shared.action.RenderResultListAction import RenderResultListAction
 from ulauncher.api.shared.action.RunScriptAction import RunScriptAction
+from ulauncher.api.shared.action.ExtensionCustomAction import ExtensionCustomAction
+from ulauncher.api.shared.action.HideWindowAction import HideWindowAction
 
-CONFIG_FILE_PATH = os.path.join(os.path.dirname(__file__), "config.json")
+CONFIG_FILE_PATH = os.path.join(os.path.dirname(os.path.realpath(__file__)), "config.json") # Use os.path.realpath to get correct path in Ulauncher context
 DEFAULT_SEARCH_PATHS = [os.path.expanduser("~")]
 FIND_COMMAND_TIMEOUT = 5
+KEYWORD_ADD_PATH = "unity_add_path"
+KEYWORD_LIST_PATHS = "unity_list_paths"
+KEYWORD_REMOVE_PATH = "unity_remove_path"
 
-def load_search_paths():
+def load_search_paths(notify_errors=True):
     """Loads search paths from config.json, defaults to DEFAULT_SEARCH_PATHS if config is missing or invalid."""
+    global BROADER_SEARCH_PATHS # Ensure we update the global
     try:
         if os.path.exists(CONFIG_FILE_PATH):
             with open(CONFIG_FILE_PATH, "r", encoding='utf-8') as f:
@@ -32,10 +38,34 @@ def load_search_paths():
         # Log error or notify user about invalid JSON
         print("Warning: Error decoding config.json. Using default search paths.")
     except Exception as e: # pylint: disable=broad-except
-        print(f"Warning: An unexpected error occurred while loading config.json: {e}. Using default search paths.")
-    return DEFAULT_SEARCH_PATHS
+        if notify_errors:
+            print(f"Warning: An unexpected error occurred while loading config.json: {e}. Using default search paths.")
+    current_paths = DEFAULT_SEARCH_PATHS
+    BROADER_SEARCH_PATHS = current_paths # Update global immediately
+    return current_paths
 
-BROADER_SEARCH_PATHS = load_search_paths()
+def save_search_paths(paths):
+    """Saves the given list of paths to config.json."""
+    global BROADER_SEARCH_PATHS, CACHED_PROJECTS_LIST
+    try:
+        # Ensure paths are absolute and expanded
+        expanded_paths = [os.path.expanduser(p) for p in paths if p.strip()]
+        # Remove duplicates while preserving order
+        unique_paths = []
+        for p in expanded_paths:
+            if p not in unique_paths:
+                unique_paths.append(p)
+
+        with open(CONFIG_FILE_PATH, "w", encoding='utf-8') as f:
+            json.dump({"search_paths": unique_paths}, f, indent=2)
+        BROADER_SEARCH_PATHS = unique_paths # Update global
+        CACHED_PROJECTS_LIST = None # Clear project cache
+        return True
+    except Exception as e: # pylint: disable=broad-except
+        print(f"Error: Could not save search paths to config.json: {e}")
+        return False
+
+BROADER_SEARCH_PATHS = load_search_paths() # Initial load
 
 
 def get_project_details_from_project_version_file(project_version_file_path):
@@ -193,63 +223,156 @@ class UnityExtension(Extension):
 
 class KeywordQueryEventListener(EventListener):
     def on_event(self, event, extension):
-        global CACHED_PROJECTS_LIST
-        query = event.get_argument() or ""
+        global CACHED_PROJECTS_LIST, BROADER_SEARCH_PATHS
         
-        overall_start_time = time.time()
-        
-        if CACHED_PROJECTS_LIST is None:
-            CACHED_PROJECTS_LIST = find_projects()
-        
-        projects = CACHED_PROJECTS_LIST
-        
-        overall_end_time = time.time()
-
         items = []
-        if projects:
-            filtered_projects = [
-                p for p in projects 
-                if query.lower() in p[0].lower() or query.lower() in p[1].lower()
-            ]
-
-            for name, path, version in filtered_projects:
-                editor_executable = find_unity_editor(version)
-                if editor_executable:
-                    items.append(
-                        ExtensionResultItem(
-                            icon='images/unity.png',
-                            name=f"{name} ({version})",
-                            description=f"Path: {path}",
-                            on_enter=RunScriptAction(f'"{editor_executable}" -projectPath "{path}"', None)
-                        )
-                    )
-                else:
-                    items.append(
-                        ExtensionResultItem(
-                            icon='images/unity.png',
-                            name=f"{name} ({version}) - Editor Not Found!",
-                            description=f"Path: {path}. Unity Editor for this version ({version}) could not be found or accessed on your system.",
-                            on_enter=None
-                        )
-                    )
+        query_full = event.get_query() # Get the full query including keyword
+        keyword = event.get_keyword() # Get the keyword used by user
         
-        if not items:
-            if not projects:
-                 description_text = "No Unity projects found in the configured search paths."
-            elif not query:
-                 description_text = "Unity projects found. Start typing to search."
+        # Determine actual keywords from manifest.json
+        prefs = extension.preferences
+        main_keyword = prefs.get('unity_kw', 'unity') # Default to 'unity' if not found
+        add_path_keyword = prefs.get('add_path_kw', KEYWORD_ADD_PATH)
+        list_paths_keyword = prefs.get('list_paths_kw', KEYWORD_LIST_PATHS)
+        remove_path_keyword = prefs.get('remove_path_kw', KEYWORD_REMOVE_PATH)
+
+        argument = event.get_argument() or ""
+
+        if keyword == add_path_keyword:
+            if not argument:
+                items.append(ExtensionResultItem(icon='images/unity.png',
+                                                 name="Add Search Path",
+                                                 description="Usage: {} <path_to_add>".format(add_path_keyword)))
+                return RenderResultListAction(items)
+
+            new_path = os.path.expanduser(argument.strip())
+            if not os.path.isdir(new_path):
+                items.append(ExtensionResultItem(icon='images/unity.png',
+                                                 name="Invalid Path",
+                                                 description=f"The path '{new_path}' is not a valid directory."))
+                return RenderResultListAction(items)
+
+            current_paths = load_search_paths(notify_errors=False) # Load current paths without printing warnings to ulauncher log for this action
+            if new_path not in current_paths:
+                current_paths.append(new_path)
+                if save_search_paths(current_paths):
+                    items.append(ExtensionResultItem(icon='images/unity.png',
+                                                     name="Path Added Successfully",
+                                                     description=f"Added '{new_path}'. Project list will be refreshed.",
+                                                     on_enter=HideWindowAction()))
+                else:
+                    items.append(ExtensionResultItem(icon='images/unity.png',
+                                                     name="Error Adding Path",
+                                                     description="Could not save the new path. Check logs."))
             else:
-                 description_text = f"No Unity project matching '{query}' found. Check your project locations and search term."
+                items.append(ExtensionResultItem(icon='images/unity.png',
+                                                 name="Path Already Exists",
+                                                 description=f"The path '{new_path}' is already in search paths.",
+                                                 on_enter=HideWindowAction()))
+            return RenderResultListAction(items)
 
-            items.append(
-                ExtensionResultItem(
-                    icon='images/unity.png',
-                    name="Unity Project Not Found",
-                    description=description_text
+        elif keyword == list_paths_keyword:
+            current_paths = load_search_paths(notify_errors=False)
+            if not current_paths:
+                items.append(ExtensionResultItem(icon='images/unity.png',
+                                                 name="No Search Paths Configured",
+                                                 description=f"Use '{add_path_keyword} <path>' to add one."))
+            else:
+                items.append(ExtensionResultItem(icon='images/unity.png',
+                                                 name="Current Search Paths:",
+                                                 description="Select a path to see removal option (not yet implemented)."))
+                for i, path_str in enumerate(current_paths):
+                    items.append(ExtensionResultItem(icon='images/unity.png',
+                                                     name=path_str,
+                                                     description=f"Path {i+1}. Type '{remove_path_keyword} {path_str}' to remove (or click).",
+                                                     on_enter=ExtensionCustomAction({"action": "copy_path", "path": path_str}))) # Placeholder for remove
+            return RenderResultListAction(items)
+        
+        elif keyword == remove_path_keyword:
+            path_to_remove = os.path.expanduser(argument.strip())
+            if not argument:
+                items.append(ExtensionResultItem(icon='images/unity.png',
+                                                 name="Remove Search Path",
+                                                 description="Usage: {} <path_to_remove>. List paths with '{}'.".format(remove_path_keyword, list_paths_keyword)))
+                return RenderResultListAction(items)
+
+            current_paths = load_search_paths(notify_errors=False)
+            if path_to_remove in current_paths:
+                current_paths.remove(path_to_remove)
+                if save_search_paths(current_paths):
+                    items.append(ExtensionResultItem(icon='images/unity.png',
+                                                     name="Path Removed Successfully",
+                                                     description=f"Removed '{path_to_remove}'. Project list will be refreshed.",
+                                                     on_enter=HideWindowAction()))
+                else:
+                    items.append(ExtensionResultItem(icon='images/unity.png',
+                                                     name="Error Removing Path",
+                                                     description="Could not save changes. Check logs."))
+            else:
+                items.append(ExtensionResultItem(icon='images/unity.png',
+                                                 name="Path Not Found",
+                                                 description=f"The path '{path_to_remove}' is not in the search list."))
+            return RenderResultListAction(items)
+
+
+        # Default behavior: Search for projects (main_keyword)
+        elif keyword == main_keyword:
+            if CACHED_PROJECTS_LIST is None: # or BROADER_SEARCH_PATHS has changed
+                # This print is for debugging if paths are not updating.
+                # print(f"Unity Launcher: Refreshing projects. Current search paths: {BROADER_SEARCH_PATHS}")
+                CACHED_PROJECTS_LIST = find_projects()
+            
+            projects = CACHED_PROJECTS_LIST
+            
+            if projects:
+                filtered_projects = [
+                    p for p in projects 
+                    if argument.lower() in p[0].lower() or argument.lower() in p[1].lower() # Use argument here
+                ]
+
+                for name, path, version in filtered_projects:
+                    editor_executable = find_unity_editor(version)
+                    if editor_executable:
+                        items.append(
+                            ExtensionResultItem(
+                                icon='images/unity.png',
+                                name=f"{name} ({version})",
+                                description=f"Path: {path}",
+                                on_enter=RunScriptAction(f'"{editor_executable}" -projectPath "{path}"', None)
+                            )
+                        )
+                    else:
+                        items.append(
+                            ExtensionResultItem(
+                                icon='images/unity.png',
+                                name=f"{name} ({version}) - Editor Not Found!",
+                                description=f"Path: {path}. Unity Editor for this version ({version}) could not be found or accessed.",
+                                on_enter=None # Or an action to inform the user
+                            )
+                        )
+            
+            if not items: # This covers no projects found, or no matching projects after filter
+                if not projects:
+                     description_text = "No Unity projects found. Use '{} <path>' to add search paths.".format(add_path_keyword)
+                elif not argument: # Projects exist, but no query typed yet
+                     description_text = "Unity projects found. Start typing to search or manage paths with other keywords."
+                else: # Projects exist, query typed, but no match
+                     description_text = f"No Unity project matching '{argument}' found. Try other keywords or manage paths."
+
+                items.append(
+                    ExtensionResultItem(
+                        icon='images/unity.png',
+                        name="Unity Project Launcher",
+                        description=description_text
+                    )
                 )
-            )
-
+            return RenderResultListAction(items)
+        
+        # Fallback for unrecognized keywords for this extension
+        items.append(ExtensionResultItem(icon='images/unity.png', name="Unknown Unity Command", description=f"Keyword '{keyword}' not recognized by Unity Launcher."))
         return RenderResultListAction(items)
 
 if __name__ == '__main__':
+    # Ensure BROADER_SEARCH_PATHS is loaded when run directly, though Ulauncher handles its own lifecycle.
+    if not BROADER_SEARCH_PATHS: BROADER_SEARCH_PATHS = load_search_paths()
     UnityExtension().run()
