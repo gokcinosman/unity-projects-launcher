@@ -1,37 +1,16 @@
 {
   "required_api_version": "2",
   "name": "Unity Project Launcher",
-  "description": "Quickly find and launch your Unity projects. Manage search paths with additional keywords.",
+  "description": "Quickly find and launch your Unity projects.",
   "developer_name": "Gokcin",
   "icon": "images/unity.png",
   "preferences": [
     {
-      "id": "unity_kw",
+      "id": "kw_upro",
       "type": "keyword",
-      "name": "Unity Projects Search",
-      "description": "Keyword to search and launch Unity projects.",
+      "name": "Unity Projects (upro)",
+      "description": "Use upro to list and launch Unity projects",
       "default_value": "upro"
-    },
-    {
-      "id": "add_path_kw",
-      "type": "keyword",
-      "name": "Add Unity Search Path",
-      "description": "Keyword to add a new search path for Unity projects.",
-      "default_value": "unity_add_path"
-    },
-    {
-      "id": "list_paths_kw",
-      "type": "keyword",
-      "name": "List Unity Search Paths",
-      "description": "Keyword to list current search paths for Unity projects.",
-      "default_value": "unity_list_paths"
-    },
-    {
-      "id": "remove_path_kw",
-      "type": "keyword",
-      "name": "Remove Unity Search Path",
-      "description": "Keyword to remove an existing search path for Unity projects.",
-      "default_value": "unity_remove_path"
     }
   ]
 }
