@@ -8,9 +8,9 @@
     {
       "id": "kw_upro",
       "type": "keyword",
-      "name": "Unity Projects (upro)",
-      "description": "Use upro to list and launch Unity projects",
-      "default_value": "upro"
+      "name": "Unity Projects (uni)",
+      "description": "Use uni to list and launch Unity projects",
+      "default_value": "uni"
     },
     {
       "id": "unity_project_paths",
