@@ -1,6 +1,7 @@
 import os
 import subprocess
 import time
+import json
 from ulauncher.api.client.Extension import Extension
 from ulauncher.api.client.EventListener import EventListener
 from ulauncher.api.shared.event import KeywordQueryEvent
@@ -8,9 +9,33 @@ from ulauncher.api.shared.item.ExtensionResultItem import ExtensionResultItem
 from ulauncher.api.shared.action.RenderResultListAction import RenderResultListAction
 from ulauncher.api.shared.action.RunScriptAction import RunScriptAction
 
-BROADER_SEARCH_PATHS = [os.path.expanduser("~")] 
+CONFIG_FILE_PATH = os.path.join(os.path.dirname(__file__), "config.json")
+DEFAULT_SEARCH_PATHS = [os.path.expanduser("~")]
+FIND_COMMAND_TIMEOUT = 5
 
-FIND_COMMAND_TIMEOUT = 5 
+def load_search_paths():
+    """Loads search paths from config.json, defaults to DEFAULT_SEARCH_PATHS if config is missing or invalid."""
+    try:
+        if os.path.exists(CONFIG_FILE_PATH):
+            with open(CONFIG_FILE_PATH, "r", encoding='utf-8') as f:
+                config_data = json.load(f)
+                paths = config_data.get("search_paths")
+                if isinstance(paths, list) and all(isinstance(p, str) for p in paths):
+                    return [os.path.expanduser(p) for p in paths if p.strip()]
+                else:
+                    # Log error or notify user about invalid config format
+                    print("Warning: Invalid format for 'search_paths' in config.json. Using default paths.")
+        else:
+            # Log error or notify user about missing config file
+            print("Warning: config.json not found. Using default search paths.")
+    except json.JSONDecodeError:
+        # Log error or notify user about invalid JSON
+        print("Warning: Error decoding config.json. Using default search paths.")
+    except Exception as e: # pylint: disable=broad-except
+        print(f"Warning: An unexpected error occurred while loading config.json: {e}. Using default search paths.")
+    return DEFAULT_SEARCH_PATHS
+
+BROADER_SEARCH_PATHS = load_search_paths()
 
 
 def get_project_details_from_project_version_file(project_version_file_path):
