@@ -9,33 +9,12 @@ from ulauncher.api.shared.item.ExtensionResultItem import ExtensionResultItem
 from ulauncher.api.shared.action.RenderResultListAction import RenderResultListAction
 from ulauncher.api.shared.action.RunScriptAction import RunScriptAction
 
-CONFIG_FILE_PATH = os.path.join(os.path.dirname(__file__), "config.json")
-DEFAULT_SEARCH_PATHS = [os.path.expanduser("~")]
 FIND_COMMAND_TIMEOUT = 5
 
-def load_search_paths():
-    """Loads search paths from config.json, defaults to DEFAULT_SEARCH_PATHS if config is missing or invalid."""
-    try:
-        if os.path.exists(CONFIG_FILE_PATH):
-            with open(CONFIG_FILE_PATH, "r", encoding='utf-8') as f:
-                config_data = json.load(f)
-                paths = config_data.get("search_paths")
-                if isinstance(paths, list) and all(isinstance(p, str) for p in paths):
-                    return [os.path.expanduser(p) for p in paths if p.strip()]
-                else:
-                    # Log error or notify user about invalid config format
-                    print("Warning: Invalid format for 'search_paths' in config.json. Using default paths.")
-        else:
-            # Log error or notify user about missing config file
-            print("Warning: config.json not found. Using default search paths.")
-    except json.JSONDecodeError:
-        # Log error or notify user about invalid JSON
-        print("Warning: Error decoding config.json. Using default search paths.")
-    except Exception as e: # pylint: disable=broad-except
-        print(f"Warning: An unexpected error occurred while loading config.json: {e}. Using default search paths.")
-    return DEFAULT_SEARCH_PATHS
-
-BROADER_SEARCH_PATHS = load_search_paths()
+# BROADER_SEARCH_PATHS is used by find_unity_editor.
+# For now, it will default to scanning the home directory.
+# This could be made configurable via preferences in the future.
+BROADER_SEARCH_PATHS = [os.path.expanduser("~")]
 
 
 def get_project_details_from_project_version_file(project_version_file_path):
@@ -63,12 +42,13 @@ def get_project_details_from_project_version_file(project_version_file_path):
         pass
     return None
 
-def find_projects_with_find_command():
+def find_projects_with_find_command(search_paths):
     """
-    Uses the 'find' command to search for Unity projects within BROADER_SEARCH_PATHS.
+    Uses the 'find' command to search for Unity projects within the provided search_paths.
     """
     projects = []
-    valid_search_paths = [p for p in BROADER_SEARCH_PATHS if os.path.isdir(p)]
+    # Use the provided search_paths argument
+    valid_search_paths = [p for p in search_paths if os.path.isdir(p)]
     if not valid_search_paths:
         return []
 
@@ -107,11 +87,11 @@ def find_projects_with_find_command():
     return projects
 
 
-def find_projects(): 
+def find_projects(search_paths): 
     all_projects_dict = {}
     
     start_time_find = time.time()
-    projects_from_find = find_projects_with_find_command()
+    projects_from_find = find_projects_with_find_command(search_paths)
     end_time_find = time.time()
     
     for project_details in projects_from_find:
@@ -121,7 +101,10 @@ def find_projects():
 
 CACHED_EDITORS = {}
 EDITORS_SCANNED = False
-CACHED_PROJECTS_LIST = None
+# CACHED_PROJECTS_LIST will now store a dictionary:
+# {'paths_key': 'raw_preference_string', 'projects': [project_list]}
+# This helps in re-scanning if the preference string changes.
+CACHED_PROJECT_DATA = None
 
 def find_unity_editor(required_version):
     """
@@ -193,15 +176,28 @@ class UnityExtension(Extension):
 
 class KeywordQueryEventListener(EventListener):
     def on_event(self, event, extension):
-        global CACHED_PROJECTS_LIST
+        global CACHED_PROJECT_DATA # Use the new cache variable
         query = event.get_argument() or ""
         
+        project_paths_string = extension.preferences.get('unity_project_paths', "")
+        
+        # Parse the project_paths_string into a list of actual search paths
+        raw_paths = project_paths_string.splitlines()
+        actual_search_paths = [os.path.expanduser(p.strip()) for p in raw_paths if p.strip()]
+
+        if not actual_search_paths: # If no paths are configured, default to home or provide a message
+            # For now, let's search no paths if none are provided by user.
+            # An alternative would be to default to home: actual_search_paths = [os.path.expanduser("~")]
+            pass
+
         overall_start_time = time.time()
         
-        if CACHED_PROJECTS_LIST is None:
-            CACHED_PROJECTS_LIST = find_projects()
+        # Check cache validity
+        if CACHED_PROJECT_DATA is None or CACHED_PROJECT_DATA.get('paths_key') != project_paths_string:
+            current_projects = find_projects(actual_search_paths)
+            CACHED_PROJECT_DATA = {'paths_key': project_paths_string, 'projects': current_projects}
         
-        projects = CACHED_PROJECTS_LIST
+        projects = CACHED_PROJECT_DATA['projects']
         
         overall_end_time = time.time()
 
@@ -234,12 +230,14 @@ class KeywordQueryEventListener(EventListener):
                     )
         
         if not items:
-            if not projects:
-                 description_text = "No Unity projects found in the configured search paths."
-            elif not query:
-                 description_text = "Unity projects found. Start typing to search."
-            else:
-                 description_text = f"No Unity project matching '{query}' found. Check your project locations and search term."
+            if not actual_search_paths:
+                description_text = "Please configure Unity project paths in extension preferences."
+            elif not projects:
+                 description_text = "No Unity projects found in the configured search paths. Check preferences."
+            elif not query and projects: # projects exist, but no query yet
+                 description_text = f"{len(projects)} Unity project(s) found. Start typing to search."
+            else: # No match for the query
+                 description_text = f"No Unity project matching '{query}' found. Check your search term or configured paths."
 
             items.append(
                 ExtensionResultItem(

@@ -11,6 +11,13 @@
       "name": "Unity Projects (upro)",
       "description": "Use upro to list and launch Unity projects",
       "default_value": "upro"
+    },
+    {
+      "id": "unity_project_paths",
+      "type": "input",
+      "name": "Unity Project Paths",
+      "description": "Enter the paths to your Unity project folders, one path per line.",
+      "default_value": "/home/user/Documents/GitHub"
     }
   ]
 }
